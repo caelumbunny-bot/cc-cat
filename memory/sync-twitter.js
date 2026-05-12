@@ -114,16 +114,30 @@ function callGeminiVision(imagePath) {
         { inline_data: { mime_type: 'image/jpeg', data: b64 } }
       ]}]
     }));
-    const out = execSync(
-      `curl -s --proxy "${PROXY}" --max-time 40 ` +
-      `"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}" ` +
-      `-H "Content-Type: application/json" -d "@${tmpReq}"`,
-      { timeout: 45000, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 }
-    );
-    const d = JSON.parse(out);
-    return d?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const out = execSync(
+        `curl -s --proxy "${PROXY}" --max-time 40 ` +
+        `"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_KEY}" ` +
+        `-H "Content-Type: application/json" -d "@${tmpReq}"`,
+        { timeout: 45000, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 }
+      );
+      const d = JSON.parse(out);
+      if (d?.error?.code === 429) {
+        const wait = 35;
+        console.log(`  ⚠ Gemini 配额限制，等待 ${wait}s 后重试 (attempt ${attempt+1}/5)...`);
+        execSync(`sleep ${wait}`);
+        continue;
+      }
+      if (d?.error) {
+        console.error('  Gemini API error:', d.error.code, d.error.message?.slice(0, 80));
+        return null;
+      }
+      return d?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+    }
+    console.error('  Gemini: 5次重试后仍然配额限制');
+    return null;
   } catch (e) {
-    console.error('  Gemini error:', e.message.slice(0, 100));
+    console.error('  Gemini error:', e.message.slice(0, 200));
     return null;
   } finally {
     try { fs.unlinkSync(tmpReq); } catch {}
@@ -145,6 +159,7 @@ function runVision(sourceHash, tweetUrl) {
       console.log(`  📷 识图: ${imgUrl.split('/').pop().split('?')[0]}`);
       const desc = callGeminiVision(tmpImg);
       if (desc) descriptions.push(desc);
+      execSync('sleep 4'); // Gemini free tier rate limit
     } catch (e) {
       console.error('  下载失败:', e.message.slice(0, 60));
     } finally {
