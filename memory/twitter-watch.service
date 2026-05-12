@@ -1,0 +1,15 @@
+[Unit]
+Description=Twitter Watch - 监听 Bunny 新推文并立即同步
+After=network.target twitter-mcp.service
+Wants=twitter-mcp.service
+
+[Service]
+Type=simple
+ExecStart=/root/memory/twitter-watch.sh
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/var/log/twitter-watch.log
+StandardError=append:/var/log/twitter-watch.log
+
+[Install]
+WantedBy=multi-user.target
