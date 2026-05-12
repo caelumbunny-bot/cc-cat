@@ -109,8 +109,11 @@ for (let page = 0; page < maxPages; page++) {
   totalInserted += result.ins;
   cursor = data.next_cursor;
 
-  // Stop paginating once we've reached tweets already in the Palace
-  if (result.hitKnown || !cursor) break;
+  // Stop pagination
+  // Normal mode: stop at first page with known tweets (chronological, no new tweets after)
+  // --init mode: continue fetching all pages until none left
+  if (!isInit && result.hitKnown) break;
+  if (!cursor) break;
 }
 
 console.log(`Inserted ${totalInserted} new tweets (others already in Palace).`);
