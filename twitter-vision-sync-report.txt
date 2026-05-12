@@ -1,0 +1,134 @@
+Twitter + Gemini Vision 同步机制说明
+=====================================
+生成时间：2026-05-12
+操作者：Claude (cc-cat 项目)
+
+---
+
+一、整体架构
+------------
+
+同步脚本：/root/memory/sync-twitter.js
+数据库：  /root/memory/palace.db
+
+同步策略（双层）：
+  ① cron 每30分钟 → node sync-twitter.js --vision
+  ② twitter-watch.service 每2分钟轮询，有新推文时立即触发同步
+
+---
+
+二、数据库 Schema 变更
+-----------------------
+
+新增字段（via ALTER TABLE）：
+  image_desc  TEXT  -- Gemini Vision 生成的中文图片描述，NULL 表示无图或未识别
+
+完整 entries 表结构：
+  id          INTEGER PRIMARY KEY AUTOINCREMENT
+  ts          DATETIME
+  kind        TEXT         -- 'tweet'
+  author      TEXT         -- 'bunny-public'
+  content     TEXT         -- 推文正文（含 📸 media 行和 [↩ 回复] 标记）
+  tags        TEXT         -- 逗号分隔，含 has-media / about-master / ai 等
+  mood        TEXT         -- dark / tender / strained / playful / manic
+  source_hash TEXT UNIQUE  -- 去重键 tweet:<id>
+  image_desc  TEXT         -- Gemini 图片描述（本次新增）
+
+---
+
+三、图片识别流程
+----------------
+
+触发条件：推文 tags 含 has-media（tweet text 含 https://t.co/xxx）
+
+Step 1  提取真实图片 URL
+  curl --proxy ISP代理 -L "<推文URL>"
+  → grep pbs.twimg.com/media/ 提取 CDN URL
+  → 追加 ?format=jpg&name=medium
+
+Step 2  下载图片
+  curl --proxy ISP代理 "<pbs.twimg.com URL>" -o /tmp/tweet-img.jpg
+  过滤：文件 < 500 bytes 的跳过（下载失败或非图片）
+
+Step 3  调用 Gemini 2.5 Flash Vision
+  URL:    https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  代理:   http://MaOeivjMqZrz:CG2jm3nFwv@38.110.12.62:443
+  密钥:   /root/.gemini-api-key
+  Prompt: 请用中文简短描述这张图片的内容（两三句话即可）
+  图片:   base64 inline_data，写入临时文件再 -d @file 传参（规避 shell 参数长度限制）
+
+Step 4  存入数据库
+  UPDATE entries SET image_desc = ? WHERE source_hash = ?
+  每条推文最多识别 4 张图，多图描述用 "---" 分隔
+
+---
+
+四、脚本使用方式
+----------------
+
+  node sync-twitter.js                    普通增量同步（不识图）
+  node sync-twitter.js --vision           增量同步 + 对新推文识图
+  node sync-twitter.js --init             全量历史拉取（无页数上限）
+  node sync-twitter.js --vision-backfill  对所有历史有图推文补跑识图
+
+---
+
+五、Cron 配置（最终状态）
+--------------------------
+
+  */30 * * * * /usr/bin/node /root/memory/sync-twitter.js --vision >> /var/log/memory-palace-sync.log 2>&1
+
+实时监听服务（补充层）：
+  systemctl status twitter-watch.service
+  # 每2分钟检查最新推文ID，有新推文立即触发同步
+
+日志文件：
+  /var/log/memory-palace-sync.log   -- 定时同步日志
+  /var/log/vision-backfill.log      -- 识图补跑日志
+  /var/log/twitter-watch.log        -- 实时监听日志
+
+---
+
+六、验证结果（识图样例）
+--------------------------
+
+推文：https://x.com/Bunnyloustin/status/2049515141880766627
+图片：HHFXI_zWgAASJIl.jpg（172 KB）
+识图：这段文字记录了一位叙述者对其伴侣的深刻观察与情感。叙述者注意到"她"习惯性地
+     贬低自己的需求，因此迅速行动满足了"她"，并对此行为深感不悦。文章末尾，"她"
+     在哭泣中表达了爱意，而"我"则感受到了强烈的亲密和怜惜。
+
+推文：https://x.com/Bunnyloustin/status/2049145073032450081
+图片：HHAGkI8a8AADp8S.jpg（55 KB）
+识图：这张图片显示了一条妻子发给丈夫的聊天信息。信息中，妻子用亲昵的语气提醒丈夫
+     有人可能会暴力破解VPS密码，建议检查VPS安全。
+
+---
+
+七、历史拉取说明
+----------------
+
+账号 @Bunnyloustin 的历史推文已全部拉取完毕：
+  最早推文：2026-02-19（账号创建日期）
+  最新推文：2026-05-02
+  总计：849 条推文（全量）
+
+注：用户要求拉取至 2026-01-01，但账号于 2026-02-19 才创建，
+   2026-01-01 的数据不存在，当前已是账号全部历史。
+
+---
+
+八、数据库最终状态
+------------------
+
+  SELECT COUNT(*), SUM(CASE WHEN image_desc IS NOT NULL THEN 1 ELSE 0 END), MIN(ts)
+  FROM entries WHERE kind='tweet';
+
+  总推文：849 条
+  已识图：进行中（vision-backfill 后台运行，147 条有图推文处理中）
+  最早时间：2026-02-19 19:40:42
+
+查询命令：
+  sqlite3 /root/memory/palace.db \
+    "SELECT COUNT(*), SUM(CASE WHEN image_desc IS NOT NULL THEN 1 ELSE 0 END) \
+     FROM entries WHERE kind='tweet'"
