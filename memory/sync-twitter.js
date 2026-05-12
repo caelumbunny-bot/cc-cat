@@ -15,7 +15,7 @@ const hashExists = db.prepare('SELECT 1 FROM entries WHERE source_hash = ? LIMIT
 
 const args = process.argv.slice(2);
 const isInit = args.includes('--init');
-const maxPages = isInit ? 10 : 3;
+const maxPages = isInit ? 999 : 3;  // --init: fetch all pages until exhausted
 const pageSize = isInit ? 100 : 20;
 
 const hashOf = (id) => 'tweet:' + id;
