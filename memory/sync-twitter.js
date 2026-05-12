@@ -110,7 +110,7 @@ function callGeminiVision(imagePath) {
     const b64 = fs.readFileSync(imagePath).toString('base64');
     fs.writeFileSync(tmpReq, JSON.stringify({
       contents: [{ parts: [
-        { text: '请用中文简短描述这张图片的内容（两三句话即可）' },
+        { text: '请判断这张图片的类型：如果图片主要是文字内容（聊天截图、文章截图、推文截图、笔记等），请把图片中的所有文字原文完整转录，不要总结、不要概括；如果是照片、插图、表情包等非文字图片，再用中文简短描述内容（两三句话）。' },
         { inline_data: { mime_type: 'image/jpeg', data: b64 } }
       ]}]
     }));
